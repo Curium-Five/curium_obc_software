@@ -23,7 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -194,19 +194,19 @@ int main(void)
   uartHandle = osThreadCreate(osThread(uart), NULL);
 
   /* definition and creation of HK */
-  osThreadDef(HK, HK_task, osPriorityNormal, 0, 512);
+  osThreadDef(HK, HK_task, osPriorityLow, 0, 512);
   HKHandle = osThreadCreate(osThread(HK), NULL);
 
   /* definition and creation of time_check */
-  osThreadDef(time_check, IDLE_task, osPriorityNormal, 0, 512);
+  osThreadDef(time_check, IDLE_task, osPriorityIdle, 0, 512);
   time_checkHandle = osThreadCreate(osThread(time_check), NULL);
 
   /* definition and creation of SU_SCH_task */
-  osThreadDef(SU_SCH_task, SU_SCH, osPriorityNormal, 0, 512);
+  osThreadDef(SU_SCH_task, SU_SCH, osPriorityBelowNormal, 0, 512);
   SU_SCH_taskHandle = osThreadCreate(osThread(SU_SCH_task), NULL);
 
   /* definition and creation of TEST_task */
-  osThreadDef(TEST_task, StartTask05, osPriorityIdle, 0, 512);
+  osThreadDef(TEST_task, StartTask05, osPriorityAboveNormal, 0, 512);
   TEST_taskHandle = osThreadCreate(osThread(TEST_task), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
@@ -801,10 +801,32 @@ static void MX_GPIO_Init(void)
 void UART_task(void const * argument)
 {
   /* USER CODE BEGIN 5 */
+	int UART_BUF_SIZE = 4096;
+	int MAX_PKT_SIZE = 2063;
+	struct uart_data {
+		uint8_t uart_buf[UART_BUF_SIZE];
+		uint8_t uart_unpkt_buf[UART_BUF_SIZE];
+		uint8_t deframed_buf[MAX_PKT_SIZE];
+		uint8_t uart_pkted_buf[UART_BUF_SIZE];
+		uint8_t framed_buf[UART_BUF_SIZE];
+		uint16_t uart_size;
+		uint32_t last_com_time;
+		uint32_t init_time;
+	};
+  struct uart_data* data = malloc(sizeof(struct uart_data));
+  UART_HandleTypeDef* huart4_ptr = &huart4;
   /* Infinite loop */
+  HAL_UART_Receive_IT(&huart4, data->uart_buf, UART_BUF_SIZE);
   for(;;)
   {
-    osDelay(1);
+	uint8_t data_tx[] = {0,1,2,3,4,5,6,7,8,10};
+	HAL_UART_Transmit (&huart4, data_tx, sizeof (data_tx), 10);
+	if(huart4_ptr->RxState == HAL_UART_STATE_READY) {
+	        data->uart_size = huart4_ptr->RxXferSize - huart4_ptr->RxXferCount;
+	        for(uint16_t i = 0; i < data->uart_size; i++) { data->uart_unpkt_buf[i] = data->uart_buf[i]; }
+	        HAL_UART_Receive_IT(&huart4, data->uart_buf, UART_BUF_SIZE);
+   }
+
   }
   /* USER CODE END 5 */
 }
