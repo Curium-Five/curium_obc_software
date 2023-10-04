@@ -20,18 +20,19 @@
 #include "main.h"
 #include "string.h"
 #include "cmsis_os.h"
-#include "error.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
 #include "conf.h"
 #include "watchdog.h"
+#include "error.h"
 
 
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
+typedef StaticTask_t osStaticThreadDef_t;
 typedef StaticSemaphore_t osStaticMutexDef_t;
 /* USER CODE BEGIN PTD */
 
@@ -96,6 +97,18 @@ const osThreadAttr_t blink_led2_attributes = {
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal7,
 };
+/* Definitions for wdg_task */
+osThreadId_t wdg_taskHandle;
+uint32_t wdg_task_buffer[ 128 ];
+osStaticThreadDef_t wdg_task_ctrl_block;
+const osThreadAttr_t wdg_task_attributes = {
+  .name = "wdg_task",
+  .cb_mem = &wdg_task_ctrl_block,
+  .cb_size = sizeof(wdg_task_ctrl_block),
+  .stack_mem = &wdg_task_buffer[0],
+  .stack_size = sizeof(wdg_task_buffer),
+  .priority = (osPriority_t) osPriorityLow2,
+};
 /* Definitions for wdg_mtx */
 osMutexId_t wdg_mtxHandle;
 osStaticMutexDef_t wdg_mtx_ctrl_block;
@@ -124,6 +137,7 @@ static void MX_IWDG1_Init(void);
 void StartDefaultTask(void *argument);
 void Blink_led1_entry(void *argument);
 void Blink_led2_entry(void *argument);
+void start_wdg_task(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -201,6 +215,9 @@ int main(void)
 
   /* creation of blink_led2 */
   blink_led2Handle = osThreadNew(Blink_led2_entry, NULL, &blink_led2_attributes);
+
+  /* creation of wdg_task */
+  wdg_taskHandle = osThreadNew(start_wdg_task, NULL, &wdg_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
 
@@ -588,6 +605,25 @@ void Blink_led2_entry(void *argument)
     osDelay(1);
   }
   /* USER CODE END Blink_led2_entry */
+}
+
+/* USER CODE BEGIN Header_start_wdg_task */
+/**
+* @brief Function implementing the wdg_task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_start_wdg_task */
+void start_wdg_task(void *argument)
+{
+  /* USER CODE BEGIN start_wdg_task */
+  /* Infinite loop */
+  for(;;)
+  {
+		watchdog_reset(&hwdg);
+		osDelay(WDG_TASK_DELAY_MS);
+  }
+  /* USER CODE END start_wdg_task */
 }
 
 /**
