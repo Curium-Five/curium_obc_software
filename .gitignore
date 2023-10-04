@@ -12,10 +12,13 @@ build/
 
 \.settings/
 
+\.idea/
+
 *Run.cfg
 *Debug.cfg
-curium-obc-software.elf.launch
-
+curium_obc_software.elf.launch
+curium_obc_software.launch
+curium_obc_software.elf
 
 # CubeMX generated files
 mx.scratch
