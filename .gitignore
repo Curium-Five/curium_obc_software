@@ -16,9 +16,8 @@ build/
 
 *Run.cfg
 *Debug.cfg
-curium_obc_software.elf.launch
-curium_obc_software.launch
-curium_obc_software.elf
+*.launch
+*.elf
 
 # CubeMX generated files
 mx.scratch
