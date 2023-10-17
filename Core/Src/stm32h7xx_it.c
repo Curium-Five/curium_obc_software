@@ -83,7 +83,7 @@ void NMI_Handler(void)
 }
 
 /**
-  * @brief This function handles the
+  * @brief This function handles Hard fault interrupt.
   */
 void HardFault_Handler(void)
 {
