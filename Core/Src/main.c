@@ -24,15 +24,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
-#include "stdlib.h"
-#include "stdio.h"
-#include "queue.h"
-
-#include "communication.h"
 #include "conf.h"
 #include "watchdog.h"
-#include "radio.h"
 #include "error.h"
+#include "communication.h"
 
 
 /* USER CODE END Includes */
@@ -80,22 +75,31 @@ IWDG_HandleTypeDef hiwdg1;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
-DMA_HandleTypeDef hdma_usart1_tx;
 DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
-/* Definitions for default_task */
-osThreadId_t default_taskHandle;
-uint32_t default_task_buffer[ 256 ];
-osStaticThreadDef_t default_task_ctrl_block;
-const osThreadAttr_t default_task_attributes = {
-  .name = "default_task",
-  .cb_mem = &default_task_ctrl_block,
-  .cb_size = sizeof(default_task_ctrl_block),
-  .stack_mem = &default_task_buffer[0],
-  .stack_size = sizeof(default_task_buffer),
+/* Definitions for defaultTask */
+osThreadId_t defaultTaskHandle;
+const osThreadAttr_t defaultTask_attributes = {
+  .name = "defaultTask",
+  .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityNormal,
+};
+/* Definitions for blink_led1 */
+osThreadId_t blink_led1Handle;
+const osThreadAttr_t blink_led1_attributes = {
+  .name = "blink_led1",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityHigh7,
+};
+/* Definitions for blink_led2 */
+osThreadId_t blink_led2Handle;
+const osThreadAttr_t blink_led2_attributes = {
+  .name = "blink_led2",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal7,
 };
 /* Definitions for wdg_task */
 osThreadId_t wdg_taskHandle;
@@ -107,7 +111,7 @@ const osThreadAttr_t wdg_task_attributes = {
   .cb_size = sizeof(wdg_task_ctrl_block),
   .stack_mem = &wdg_task_buffer[0],
   .stack_size = sizeof(wdg_task_buffer),
-  .priority = (osPriority_t) osPriorityNormal,
+  .priority = (osPriority_t) osPriorityLow2,
 };
 /* Definitions for ecss_task */
 osThreadId_t ecss_taskHandle;
@@ -134,24 +138,8 @@ const osMutexAttr_t wdg_mtx_attributes = {
 struct watchdog hwdg;
 struct wdg_rec wdg_recorder;
 /* Pointer to a region in SRAM2 where watchdog reset mask is stored*/
-uint8_t *wdg_rst_ptr = (uint8_t *) 0x64000000;
+uint8_t *wdg_rst_ptr = (uint8_t *)0x10007800;
 
-/*
- * The CSMIS interface from ST for reasons that are not obvious support only
- * messages of scalar data types. A workaround is to use a memory pool.
- * However, for unexplained reasons memory pools are not supported with
- * static memory allocation configuration. We ended using the native
- * FREERTOS API...
- */
-StaticQueue_t rx_queue_priv;
-uint8_t rx_queue_pool[MAX_RX_FRAMES * sizeof(struct rx_frame)];
-QueueHandle_t rx_queue;
-
-struct rx_frame r;
-
-QueueHandle_t hdlc_queue;
-static HDLC_Frame_Struct currentFrame = {{0}, 0};
-static uint16_t currentFrameIndex = 0;
 
 /* USER CODE END PV */
 
@@ -165,6 +153,8 @@ static void MX_IWDG1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_ETH_Init(void);
 void StartDefaultTask(void *argument);
+void Blink_led1_entry(void *argument);
+void Blink_led2_entry(void *argument);
 void start_wdg_task(void *argument);
 void start_ecss_task(void *argument);
 
@@ -176,14 +166,6 @@ void print_debug_msg(const char *msg);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-int _write(int file, char *ptr, int len) {
-    /* Implement your write code here, this is used by puts and printf for example */
-    int i = 0;
-    for (i = 0; i < len; i++)
-        ITM_SendChar((*ptr++));
-    return len;
-}
 
 /* USER CODE END 0 */
 
@@ -223,15 +205,6 @@ int main(void)
   MX_ETH_Init();
   /* USER CODE BEGIN 2 */
 
-    printf("Starting. Lets go!\n");
-    HAL_UART_Receive_DMA(&huart1, &currentFrame.data[currentFrameIndex], 1);
-    hdlc_queue = xQueueCreate(2, sizeof(HDLC_Frame_Struct));
-    if (hdlc_queue == NULL) {
-        /* Queue was not created and must not be used. */
-        print_debug_msg("Warning: No queue created!\n");
-    }
-
-
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -241,24 +214,30 @@ int main(void)
   wdg_mtxHandle = osMutexNew(&wdg_mtx_attributes);
 
   /* USER CODE BEGIN RTOS_MUTEX */
-    /* add mutexes, ... */
+  /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
-    /* add semaphores, ... */
+  /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
 
   /* USER CODE BEGIN RTOS_TIMERS */
-    /* start timers, add new ones, ... */
+  /* start timers, add new ones, ... */
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-    /* add queues, ... */
+  /* add queues, ... */
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
-  /* creation of default_task */
-  default_taskHandle = osThreadNew(StartDefaultTask, NULL, &default_task_attributes);
+  /* creation of defaultTask */
+  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+
+  /* creation of blink_led1 */
+  blink_led1Handle = osThreadNew(Blink_led1_entry, NULL, &blink_led1_attributes);
+
+  /* creation of blink_led2 */
+  blink_led2Handle = osThreadNew(Blink_led2_entry, NULL, &blink_led2_attributes);
 
   /* creation of wdg_task */
   wdg_taskHandle = osThreadNew(start_wdg_task, NULL, &wdg_task_attributes);
@@ -269,16 +248,17 @@ int main(void)
   /* USER CODE BEGIN RTOS_THREADS */
 
 
-    int ret = watchdog_init(&hwdg, &hiwdg1, wdg_mtxHandle, 9, &wdg_recorder,
-                            wdg_rst_ptr);
-    if (ret) {
-        Error_Handler();
-    }
+  int ret = watchdog_init(&hwdg, &hiwdg1, wdg_mtxHandle, 9, &wdg_recorder,
+							wdg_rst_ptr);
+  if (ret) {
+	  Error_Handler();
+  }
+
 
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
-    /* add events, ... */
+  /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
@@ -287,11 +267,12 @@ int main(void)
   /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-    while (1) {
+  while (1)
+  {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    }
+  }
   /* USER CODE END 3 */
 }
 
@@ -660,49 +641,6 @@ void print_debug_msg(const char *msg) {
     }
 }
 
-/**
- * @brief Callback that will handle UART byte-wise
- *
- * For each received byte on UART
- *
- *
- * @param huart UART Handle
- * @return void
- */
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
-    // If the end flag sequence is received
-    if (currentFrame.data[currentFrameIndex] == HDLC_FLAG_SEQUENCE) {
-        if (currentFrameIndex >= HDLC_MIN_PAKET_LENGTH) {
-            // A complete frame has been received
-            currentFrame.length = currentFrameIndex;
-            // Send the frame to the queue
-            HDLC_Frame_Struct currentFrameCopy = currentFrame;
-            BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-            if (xQueueSendFromISR(hdlc_queue, &currentFrameCopy, &xHigherPriorityTaskWoken) == pdTRUE) {
-                // Message was successfully posted to the queue
-            }
-
-            // If xHigherPriorityTaskWoken was set to true, a context switch should be requested
-            portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
-
-        }
-        currentFrameIndex = 0;
-    } else {
-        // Increment the index
-        currentFrameIndex++;
-
-        // To avoid buffer overflow
-        if (currentFrameIndex >= HLDC_BUFFER_SIZE) {
-            currentFrameIndex = 0;
-        }
-    }
-
-    //TODO Receiving without DMA, bc just 1 byte
-
-    // Wait for the next data
-    HAL_UART_Receive_DMA(&huart1, &currentFrame.data[currentFrameIndex], 1);
-}
-
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -715,19 +653,59 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-    uint8_t wdgid;
-    int ret = watchdog_register(&hwdg, &wdgid, "default");
+	uint8_t wdgid;
+	int ret = watchdog_register(&hwdg, &wdgid, "default");
 
-    if (ret != NO_ERROR) {
-        Error_Handler();
-    }
+	if (ret != NO_ERROR) {
+		Error_Handler();
+	}
 
-    while (1) {
-        watchdog_reset_subsystem(&hwdg, wdgid);
-        osDelay(10000);
-    }
+	while (1) {
+		watchdog_reset_subsystem(&hwdg, wdgid);
+		osDelay(10000);
+	}
 
   /* USER CODE END 5 */
+}
+
+/* USER CODE BEGIN Header_Blink_led1_entry */
+/**
+* @brief Function implementing the blink_led1 thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Blink_led1_entry */
+void Blink_led1_entry(void *argument)
+{
+  /* USER CODE BEGIN Blink_led1_entry */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(500);
+    HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_1); // Replace GPIOA and GPIO_PIN_5 with your LED's GPIO Port and Pin
+
+  }
+  /* USER CODE END Blink_led1_entry */
+}
+
+/* USER CODE BEGIN Header_Blink_led2_entry */
+/**
+* @brief Function implementing the blink_led2 thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_Blink_led2_entry */
+void Blink_led2_entry(void *argument)
+{
+  /* USER CODE BEGIN Blink_led2_entry */
+  /* Infinite loop */
+  for(;;)
+  {
+    osDelay(500);
+    HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_2); // Replace GPIOA and GPIO_PIN_5 with your LED's GPIO Port and Pin
+
+  }
+  /* USER CODE END Blink_led2_entry */
 }
 
 /* USER CODE BEGIN Header_start_wdg_task */
@@ -740,11 +718,12 @@ void StartDefaultTask(void *argument)
 void start_wdg_task(void *argument)
 {
   /* USER CODE BEGIN start_wdg_task */
-    /* Infinite loop */
-    for (;;) {
-        watchdog_reset(&hwdg);
-        osDelay(WDG_TASK_DELAY_MS);
-    }
+  /* Infinite loop */
+  for(;;)
+  {
+		watchdog_reset(&hwdg);
+		osDelay(WDG_TASK_DELAY_MS);
+  }
   /* USER CODE END start_wdg_task */
 }
 
@@ -758,28 +737,21 @@ void start_wdg_task(void *argument)
 void start_ecss_task(void *argument)
 {
   /* USER CODE BEGIN start_ecss_task */
-    HDLC_Frame_Struct hdlcFrame;
+	uint8_t wdgid;
+	int ret = watchdog_register(&hwdg, &wdgid, "ecss");
 
-    uint8_t wdgid;
-    int ret = watchdog_register(&hwdg, &wdgid, "ecss_task");
+	if (ret != NO_ERROR) {
+		Error_Handler();
+	}
 
-    if (ret != NO_ERROR) {
-        Error_Handler();
-    }
+	 print_debug_msg("Starting ECSS thread!\n");
 
-    print_debug_msg("Starting UART task\n");
-    /* Infinite loop */
-    for (;;) {
-        watchdog_reset_subsystem(&hwdg, wdgid);
-        if (xQueueReceive(hdlc_queue, &hdlcFrame, (TickType_t) 10) == pdPASS) {
-            // Process the received HDLC frame
-            uint8_t destuffed_data[HLDC_BUFFER_SIZE];
-            uint16_t destuffed_length = 0;
-            destuff_hdlc_frame(&hdlcFrame, destuffed_data, &destuffed_length);
-            encode_hldc_frame(destuffed_data, destuffed_length, &hdlcFrame);
-            HAL_UART_Transmit_DMA(&huart1, hdlcFrame.data, hdlcFrame.length);
-        }
-    }
+  /* Infinite loop */
+  for(;;)
+  {
+	watchdog_reset_subsystem(&hwdg, wdgid);
+    osDelay(1);
+  }
   /* USER CODE END start_ecss_task */
 }
 
@@ -811,10 +783,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-    /* User can add his own implementation to report the HAL error return state */
-    __disable_irq();
-    while (1) {
-    }
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
   /* USER CODE END Error_Handler_Debug */
 }
 
