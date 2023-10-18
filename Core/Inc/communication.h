@@ -1,9 +1,12 @@
-//
-// Created by Marcus Ding on 17.10.23.
-//
+/*
+ * communication.h
+ *
+ *  Created on: Oct 18, 2023
+ *      Author: kryptokommunist
+ */
 
-#ifndef CURIUM_OBC_SOFTWARE_COMMUNICATION_H
-#define CURIUM_OBC_SOFTWARE_COMMUNICATION_H
+#ifndef INC_COMMUNICATION_H_
+#define INC_COMMUNICATION_H_
 
 /**
  * HLDC protocol variables
@@ -27,4 +30,4 @@ void destuff_hdlc_frame(HDLC_Frame_Struct *frame, uint8_t *destuffed_data, uint1
 void bit_stuff(uint8_t *data, uint16_t length, uint8_t *stuffed_data, uint16_t *stuffed_length);
 void encode_hldc_frame(uint8_t *data, uint16_t length, HDLC_Frame_Struct *frame);
 
-#endif //CURIUM_OBC_SOFTWARE_COMMUNICATION_H
+#endif /* INC_COMMUNICATION_H_ */
