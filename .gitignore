@@ -14,10 +14,10 @@ build/
 
 #\.idea/
 
-*Run.cfg
-*Debug.cfg
-*.launch
-*.elf
+#*Run.cfg
+#*Debug.cfg
+#*.launch
+#*.elf
 
 # CubeMX generated files
 #mx.scratch
