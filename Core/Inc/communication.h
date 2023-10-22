@@ -8,6 +8,12 @@
 #ifndef INC_COMMUNICATION_H_
 #define INC_COMMUNICATION_H_
 
+
+/**
+ * Maximum frames in HDLC queue
+ */
+#define MAX_RX_FRAMES 2
+
 /**
  * HLDC protocol variables
  */

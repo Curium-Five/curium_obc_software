@@ -24,6 +24,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include "queue.h"
 #include "conf.h"
 #include "watchdog.h"
 #include "error.h"
@@ -140,6 +141,12 @@ struct wdg_rec wdg_recorder;
 /* Pointer to a region in SRAM2 where watchdog reset mask is stored*/
 uint8_t *wdg_rst_ptr = (uint8_t *)0x10007800;
 
+StaticQueue_t hdlc_queue_priv;
+uint8_t hdlc_queue_pool[MAX_RX_FRAMES * sizeof(struct HDLC_Frame_Struct)];
+QueueHandle_t hdlc_queue;
+static HDLC_Frame_Struct currentFrame = {{0}, 0};
+static uint16_t currentFrameIndex = 0;
+
 
 /* USER CODE END PV */
 
@@ -205,6 +212,8 @@ int main(void)
   MX_ETH_Init();
   /* USER CODE BEGIN 2 */
 
+  HAL_UART_Receive_DMA(&huart1, &currentFrame.data[currentFrameIndex], 1);
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -226,7 +235,12 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+    hdlc_queue = xQueueCreateStatic(MAX_RX_FRAMES,
+                                  sizeof(struct HDLC_Frame_Struct),
+                                  hdlc_queue_pool,
+                                  &hdlc_queue_priv);
+    configASSERT(hdlc_queue);
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -737,6 +751,8 @@ void start_wdg_task(void *argument)
 void start_ecss_task(void *argument)
 {
   /* USER CODE BEGIN start_ecss_task */
+	HDLC_Frame_Struct hdlcFrame;
+
 	uint8_t wdgid;
 	int ret = watchdog_register(&hwdg, &wdgid, "ecss");
 
@@ -750,7 +766,14 @@ void start_ecss_task(void *argument)
   for(;;)
   {
 	watchdog_reset_subsystem(&hwdg, wdgid);
-    osDelay(1);
+    if (xQueueReceive(hdlc_queue, &hdlcFrame, pdMS_TO_TICKS(5000)) == pdPASS) {
+        // Process the received HDLC frame
+        uint8_t destuffed_data[HLDC_BUFFER_SIZE];
+        uint16_t destuffed_length = 0;
+        destuff_hdlc_frame(&hdlcFrame, destuffed_data, &destuffed_length);
+        encode_hldc_frame(destuffed_data, destuffed_length, &hdlcFrame);
+        HAL_UART_Transmit_DMA(&huart1, hdlcFrame.data, hdlcFrame.length);
+    }
   }
   /* USER CODE END start_ecss_task */
 }

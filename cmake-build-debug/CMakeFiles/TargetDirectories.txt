@@ -1,0 +1,3 @@
+/Users/kryptokommunist/STM32CubeIDE/workspace_1.13.1/curium_obc_software/cmake-build-debug/CMakeFiles/curium_obc_software.elf.dir
+/Users/kryptokommunist/STM32CubeIDE/workspace_1.13.1/curium_obc_software/cmake-build-debug/CMakeFiles/edit_cache.dir
+/Users/kryptokommunist/STM32CubeIDE/workspace_1.13.1/curium_obc_software/cmake-build-debug/CMakeFiles/rebuild_cache.dir
