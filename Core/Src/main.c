@@ -24,9 +24,11 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include "queue.h"
 #include "conf.h"
 #include "watchdog.h"
 #include "error.h"
+#include "communication.h"
 
 
 /* USER CODE END Includes */
@@ -72,7 +74,10 @@ ETH_HandleTypeDef heth;
 
 IWDG_HandleTypeDef hiwdg1;
 
+UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
@@ -109,6 +114,18 @@ const osThreadAttr_t wdg_task_attributes = {
   .stack_size = sizeof(wdg_task_buffer),
   .priority = (osPriority_t) osPriorityLow2,
 };
+/* Definitions for ecss_task */
+osThreadId_t ecss_taskHandle;
+uint32_t ecss_task_buffer[ 512 ];
+osStaticThreadDef_t ecss_task_ctrl_block;
+const osThreadAttr_t ecss_task_attributes = {
+  .name = "ecss_task",
+  .cb_mem = &ecss_task_ctrl_block,
+  .cb_size = sizeof(ecss_task_ctrl_block),
+  .stack_mem = &ecss_task_buffer[0],
+  .stack_size = sizeof(ecss_task_buffer),
+  .priority = (osPriority_t) osPriorityNormal,
+};
 /* Definitions for wdg_mtx */
 osMutexId_t wdg_mtxHandle;
 osStaticMutexDef_t wdg_mtx_ctrl_block;
@@ -124,22 +141,33 @@ struct wdg_rec wdg_recorder;
 /* Pointer to a region in SRAM2 where watchdog reset mask is stored*/
 uint8_t *wdg_rst_ptr = (uint8_t *)0x10007800;
 
+StaticQueue_t hdlc_queue_priv;
+uint8_t hdlc_queue_pool[MAX_RX_FRAMES * sizeof(struct HDLC_Frame_Struct)];
+QueueHandle_t hdlc_queue;
+static HDLC_Frame_Struct currentFrame = {{0}, 0};
+static uint16_t currentFrameIndex = 0;
+
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_ETH_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_IWDG1_Init(void);
+static void MX_USART1_UART_Init(void);
+static void MX_ETH_Init(void);
 void StartDefaultTask(void *argument);
 void Blink_led1_entry(void *argument);
 void Blink_led2_entry(void *argument);
 void start_wdg_task(void *argument);
+void start_ecss_task(void *argument);
 
 /* USER CODE BEGIN PFP */
+
+void print_debug_msg(const char *msg);
 
 /* USER CODE END PFP */
 
@@ -176,11 +204,15 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_ETH_Init();
+  MX_DMA_Init();
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
   MX_IWDG1_Init();
+  MX_USART1_UART_Init();
+  MX_ETH_Init();
   /* USER CODE BEGIN 2 */
+
+  HAL_UART_Receive_DMA(&huart1, &currentFrame.data[currentFrameIndex], 1);
 
   /* USER CODE END 2 */
 
@@ -203,7 +235,12 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
+    hdlc_queue = xQueueCreateStatic(MAX_RX_FRAMES,
+                                  sizeof(struct HDLC_Frame_Struct),
+                                  hdlc_queue_pool,
+                                  &hdlc_queue_priv);
+    configASSERT(hdlc_queue);
+
   /* USER CODE END RTOS_QUEUES */
 
   /* Create the thread(s) */
@@ -218,6 +255,9 @@ int main(void)
 
   /* creation of wdg_task */
   wdg_taskHandle = osThreadNew(start_wdg_task, NULL, &wdg_task_attributes);
+
+  /* creation of ecss_task */
+  ecss_taskHandle = osThreadNew(start_ecss_task, NULL, &ecss_task_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
 
@@ -391,6 +431,54 @@ static void MX_IWDG1_Init(void)
 }
 
 /**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart1, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart1, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
   * @brief USART3 Initialization Function
   * @param None
   * @retval None
@@ -475,6 +563,25 @@ static void MX_USB_OTG_FS_PCD_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -542,6 +649,12 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+void print_debug_msg(const char *msg) {
+    if (msg != NULL) {
+        HAL_UART_Transmit_DMA(&huart1, (uint8_t *) msg, strlen(msg));
+    }
+}
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -602,7 +715,9 @@ void Blink_led2_entry(void *argument)
   /* Infinite loop */
   for(;;)
   {
-    osDelay(1);
+    osDelay(500);
+    HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_2); // Replace GPIOA and GPIO_PIN_5 with your LED's GPIO Port and Pin
+
   }
   /* USER CODE END Blink_led2_entry */
 }
@@ -624,6 +739,43 @@ void start_wdg_task(void *argument)
 		osDelay(WDG_TASK_DELAY_MS);
   }
   /* USER CODE END start_wdg_task */
+}
+
+/* USER CODE BEGIN Header_start_ecss_task */
+/**
+* @brief Function implementing the ecss_task thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_start_ecss_task */
+void start_ecss_task(void *argument)
+{
+  /* USER CODE BEGIN start_ecss_task */
+	HDLC_Frame_Struct hdlcFrame;
+
+	uint8_t wdgid;
+	int ret = watchdog_register(&hwdg, &wdgid, "ecss");
+
+	if (ret != NO_ERROR) {
+		Error_Handler();
+	}
+
+	 print_debug_msg("Starting ECSS thread!\n");
+
+  /* Infinite loop */
+  for(;;)
+  {
+	watchdog_reset_subsystem(&hwdg, wdgid);
+    if (xQueueReceive(hdlc_queue, &hdlcFrame, pdMS_TO_TICKS(5000)) == pdPASS) {
+        // Process the received HDLC frame
+        uint8_t destuffed_data[HLDC_BUFFER_SIZE];
+        uint16_t destuffed_length = 0;
+        destuff_hdlc_frame(&hdlcFrame, destuffed_data, &destuffed_length);
+        encode_hldc_frame(destuffed_data, destuffed_length, &hdlcFrame);
+        HAL_UART_Transmit_DMA(&huart1, hdlcFrame.data, hdlcFrame.length);
+    }
+  }
+  /* USER CODE END start_ecss_task */
 }
 
 /**

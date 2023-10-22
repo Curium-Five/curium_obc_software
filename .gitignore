@@ -5,19 +5,19 @@ build/
 
 *.o
 
-\.project
-\.cproject
+#\.project
+#\.cproject
 
-\.mxproject
+#\.mxproject
 
-\.settings/
+#\.settings/
 
-\.idea/
+#\.idea/
 
-*Run.cfg
-*Debug.cfg
-*.launch
-*.elf
+#*Run.cfg
+#*Debug.cfg
+#*.launch
+#*.elf
 
 # CubeMX generated files
-mx.scratch
+#mx.scratch
